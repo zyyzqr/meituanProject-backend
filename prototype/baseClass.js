@@ -4,8 +4,6 @@ import config from '../config'
 
 export default class BaseClass {
   constructor() {
-    this.tencentkey = config.tencentkey;
-    this.tencentkey2 = config.tencentkey2;
     this.idList = ['restaurant_id', 'food_id', 'order_id', 'user_id', 'address_id', 'category_id', 'sku_id', 'admin_id', 'pay_id', 'comment_id'];
   }
 
@@ -16,12 +14,14 @@ export default class BaseClass {
       let dataStr = ''; //数据拼接字符串
       Object.keys(data).forEach(key => {
         dataStr += key + '=' + data[key] + '&';
+      
       });
 
       if (dataStr !== '') {
         dataStr = dataStr.substr(0, dataStr.lastIndexOf('&'));
         url = url + '?' + dataStr;
       }
+      console.log(url); //新的baseClass.js文件加了这一行，打印当前秘钥和写死的ip地址
     }
 
     let requestConfig = {
@@ -56,89 +56,116 @@ export default class BaseClass {
   async getId(type_id) {
     if (!this.idList.includes(type_id)) {
       throw new Error('id类型错误');
-      return
+      return;
     }
     try {
-      const idData = await Ids.findOneAndUpdate({}, {'$inc': {[type_id]: 1}});
+      const idData = await Ids.findOneAndUpdate({}, { '$inc': { [type_id]: 1 } });
       return ++idData[type_id];                //返回当前类型id数量*/
     } catch (err) {
       console.log('获取ID数据失败');
       throw new Error(err)
     }
   }
-
-  //根据ip定位定位  只能获取到经纬度和省份城市  不能获取到具体位置 还需要调用下面接口获取具体位置
+  
+  // getLocation方法
+  //根据ip定位来定位：只能获取到经纬度和省份城市，不能获取到具体位置，还需要调用下面接口获取具体位置
   async getLocation(req, res, next) {
-    let ip = req.ip;
-    const ipArr = ip.split(':');                    //切割字符串提取ip
-    ip = ipArr[ipArr.length - 1];
+    // 通过请求头信息获取ip
+    let ip = req.ip;  // 获取的是请求头中的ip，还需要进行数据处理
+    const ipArr = ip.split(':');
+    ip = ipArr[ipArr.length - 1];//切割字符串提取ip
+
     if (process.env.NODE_ENV == 'dev') {    //开发环境
       ip = '123.118.106.229';
     }
-    try {
-      let result;
-      //根据ip地址请求获取数据
-      result = await this.fetch('http://apis.map.qq.com/ws/location/v1/ip', {
-        ip,
-        key: this.tencentkey,
-      },'GET');
-      if (result.status !== 0) {
-        result = await this.fetch('http://apis.map.qq.com/ws/location/v1/ip', {
-          ip,
-          key: this.tencentkey2,
-        },'GET')
-      }
 
-      //status===0表示请求成功
-      if (result.status === 0) {
+    try {
+      // let getIpResult;
+      // //添加的获取ip地址的方法
+      // getIpResult = await this.fetch('https://ip.cn/api/index', {
+      //   ip: "",
+      //   type: 0,
+      // }, 'GET');
+      // if (getIpResult.ip) {
+      //   ip = getIpResult.ip;
+      // } else {
+      //   res.send({
+      //     status: -1,
+      //     message: '获取ip地址的接口失败'
+      //   })
+      //   return;
+      // }
+      console.log("获取的地址是",ip);
+      
+      //ip = '123.118.106.229'; //这个ip地址就是老师写死的“北京市东城区”
+
+      // **接口1：根据前端所在ip，腾讯秘钥，获取经纬度、城市
+      let getResult = await this.fetch('http://apis.map.qq.com/ws/location/v1/ip', {
+        ip: ip, //前端所在ip地址
+        key: config.tencentkey, //腾讯秘钥1
+      }, 'GET');
+      if (getResult.status !== 0) {
+        getResult = await this.fetch('http://apis.map.qq.com/ws/location/v1/ip', {
+          ip: ip,
+          key: config.tencentkey2, //腾讯秘钥2
+        }, 'GET')
+
+      }
+      console.log(
+        "请求的地址",'http://apis.map.qq.com/ws/location/v1/ip',ip,config.tencentkey
+      );
+      if (getResult.status == 0) {
         const cityInfo = {
-          lat: result.result.location.lat,    //纬度
-          lng: result.result.location.lng,    //经度
-          city: result.result.ad_info.city,
+          lat: getResult.result.location.lat,    //纬度
+          lng: getResult.result.location.lng,    //经度
+          city: getResult.result.ad_info.city,   //城市的名称
         };
         cityInfo.city = cityInfo.city.replace(/市$/, '');
         return cityInfo;
       } else {
-        /* console.log('定位失败', result)
-         res.send({
-             status: -1,
-             message: '定位失败'
-         })*/
-        //  const cityInfo = {
-        //   lat: result.result.location.lat,    //纬度
-        //   lng: result.result.location.lng,    //经度
-        //   city: result.result.ad_info.city,
-        // };
-        // cityInfo.city = cityInfo.city.replace(/市$/, '');
-        // return cityInfo;
-        return {lat: 40.22077, lng: 116.23128, city: '北京市'}
 
+        res.send({
+          status: -1,
+          message: '腾讯通过ip获取地址接口失败'
+        })
+        // 如果请求的接口都失败，返回默认地址
+        return { lat: 40.22077, lng: 116.23128, city: '北京市' };
       }
     } catch (err) {
-      console.log('定位失败', err);
+
+      console.log(err)
       res.send({
         status: -1,
-        message: '定位失败'
+        message: '定位方法内部报错'
       })
     }
   }
 
-  //根据经纬度获取详细地址信息
+  // **接口2：根据接口1的返回值：经纬度、城市，获取当前位置的具体地址、定位
   async getDetailPosition(location, res, successFn) {
     try {
+      let cityInfo;
       if (location) {
-        let cityInfo = await this.fetch('http://apis.map.qq.com/ws/geocoder/v1', {
+        cityInfo = await this.fetch('http://apis.map.qq.com/ws/geocoder/v1', {
           location: location.lat + ',' + location.lng,
-          key: this.tencentkey
+          key: config.tencentkey //腾讯秘钥1
         }, 'GET');
-        let address = cityInfo.result.address.replace(/^.{2}省.{2}市/, '');
-        successFn({
-          address,
-          location
-        });
+        if (cityInfo.status !== 0) {
+          cityInfo = await this.fetch('http://apis.map.qq.com/ws/geocoder/v1', {
+            location: location.lat + ',' + location.lng,
+            key: config.tencentkey2 //腾讯秘钥2
+          }, 'GET');
+        }
+        if (cityInfo.status == 0) {
+          let address = cityInfo.result.address.replace(/^.{2}省.{2}市/, '');
+          successFn({
+            address,  // 当前位置的具体地址
+            location  // 定位
+          });
+        } 
+
       }
     } catch (err) {
-      console.log('获取位置失败', err);
       res.send({
         status: -1,
         message: '获取定位失败'
@@ -148,14 +175,15 @@ export default class BaseClass {
   }
 
   //根据关键词搜索位置
-  async locationSearch(keyword) { 
+  async locationSearch(keyword) {
     try {
       let reqData = {
         keyword: encodeURI(keyword),
-        key: this.tencentkey,
+        key: config.tencentkey,
         policy: 1
       }
       let data = await this.fetch('http://apis.map.qq.com/ws/place/v1/suggestion', reqData, "GET");
+      console.log('http://apis.map.qq.com/ws/place/v1/suggestion',encodeURI(keyword),config.tencentkey,'policy')
       return data;
     } catch (err) {
       console.log('搜索位置出错', err);
